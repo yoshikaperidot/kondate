@@ -465,10 +465,21 @@
       var raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         var d = JSON.parse(raw);
-        if (d && typeof d === 'object') return { recipes: d.recipes || [], meals: d.meals || {}, checks: d.checks || {}, genres: d.genres || [] };
+        if (d && typeof d === 'object') {
+          var s = { recipes: d.recipes || [], meals: d.meals || {}, checks: d.checks || {}, genres: d.genres || [] };
+          migrateGenres(s.recipes);
+          return s;
+        }
       }
     } catch(e){}
     return { recipes: [], meals: {}, checks: {}, genres: [] };
+  }
+  // 旧形式(genre: 文字列)を新形式(genres: 配列)へ変換
+  function migrateGenres(recipes){
+    recipes.forEach(function(r){
+      if (!Array.isArray(r.genres)) r.genres = (r.genre && String(r.genre).trim()) ? [String(r.genre).trim()] : [];
+      delete r.genre;
+    });
   }
   function save(){
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
@@ -483,7 +494,7 @@
     recipeSearch: '',
     recipeSort: 'default',   // default | stars
     recipeGenre: 'all',      // all | __none | ジャンル名
-    formGenre: '',
+    formGenres: [],
     addTarget: null,       // {dateKey, mealKey}
     editingRecipeId: null,
     detailRecipeId: null
@@ -692,10 +703,11 @@
   function renderRecipes(){
     var q = ui.recipeSearch.trim();
     var list = state.recipes.filter(function(r){
-      if (ui.recipeGenre === '__none' && r.genre) return false;
-      if (ui.recipeGenre !== 'all' && ui.recipeGenre !== '__none' && r.genre !== ui.recipeGenre) return false;
+      var gs = r.genres || [];
+      if (ui.recipeGenre === '__none' && gs.length) return false;
+      if (ui.recipeGenre !== 'all' && ui.recipeGenre !== '__none' && gs.indexOf(ui.recipeGenre) === -1) return false;
       if (!q) return true;
-      var hay = r.name + ' ' + r.ingredients.join(' ') + ' ' + r.seasonings.join(' ') + ' ' + (r.genre || '');
+      var hay = r.name + ' ' + r.ingredients.join(' ') + ' ' + r.seasonings.join(' ') + ' ' + gs.join(' ');
       return hay.indexOf(q) !== -1;
     });
     if (ui.recipeSort === 'stars') {
@@ -722,7 +734,7 @@
     } else {
       list.forEach(function(r){
         var stars = r.rating ? '<span class="r-stars">' + '★★★★★'.slice(0, r.rating) + '</span>' : '';
-        var genre = r.genre ? '<span class="r-genre">' + esc(r.genre) + '</span>' : '';
+        var genre = (r.genres || []).map(function(g){ return '<span class="r-genre">' + esc(g) + '</span>'; }).join('');
         html += '<button class="recipe-card" data-id="' + r.id + '">' +
           '<div class="r-name">' + esc(r.name) + stars + '</div>' +
           '<div class="r-meta">' + genre + esc(r.ingredients.join('・') || '食材未登録') + '</div></button>';
@@ -880,7 +892,9 @@
         var g = b.dataset.gdel;
         if (!confirm('ジャンル「' + g + '」を削除しますか?\n(このジャンルのレシピは「未分類」になります)')) return;
         state.genres = state.genres.filter(function(x){ return x !== g; });
-        state.recipes.forEach(function(r){ if (r.genre === g) r.genre = ''; });
+        state.recipes.forEach(function(r){
+          r.genres = (r.genres || []).filter(function(x){ return x !== g; });
+        });
         if (ui.recipeGenre === g) ui.recipeGenre = 'all';
         save(); render();
       });
@@ -920,6 +934,7 @@
         }
         if (!confirm('現在のデータをこのバックアップで置き換えます。よろしいですか?')) return;
         state = { recipes: d.recipes, meals: d.meals || {}, checks: d.checks || {}, genres: d.genres || [] };
+        migrateGenres(state.recipes);
         save(); render();
         alert('インポートが完了しました。');
       } catch(err) {
@@ -1018,7 +1033,7 @@
     document.getElementById('rIngredients').value = recipe ? recipe.ingredients.join('\n') : '';
     document.getElementById('rSeasonings').value = recipe ? recipe.seasonings.join('\n') : '';
     document.getElementById('rSteps').value = recipe ? (recipe.steps || '') : '';
-    ui.formGenre = recipe ? (recipe.genre || '') : '';
+    ui.formGenres = recipe ? (recipe.genres || []).slice() : [];
     ui.addingGenre = false;
     renderGenreChips();
     var jbox = document.getElementById('jsonImportBox');
@@ -1029,9 +1044,9 @@
   }
   function renderGenreChips(){
     var box = document.getElementById('rGenreChips');
-    var html = '<button class="g-chip' + (ui.formGenre === '' ? ' on' : '') + '" data-g="">なし</button>';
+    var html = '<button class="g-chip' + (ui.formGenres.length === 0 ? ' on' : '') + '" data-none="1">なし</button>';
     state.genres.forEach(function(g){
-      html += '<button class="g-chip' + (ui.formGenre === g ? ' on' : '') + '" data-g="' + esc(g) + '">' + esc(g) + '</button>';
+      html += '<button class="g-chip' + (ui.formGenres.indexOf(g) !== -1 ? ' on' : '') + '" data-g="' + esc(g) + '">' + esc(g) + '</button>';
     });
     if (ui.addingGenre) {
       html += '<span class="g-new">' +
@@ -1049,7 +1064,14 @@
           renderGenreChips();
           return;
         }
-        ui.formGenre = b.dataset.g;
+        if (b.dataset.none) {
+          ui.formGenres = [];
+        } else {
+          var g = b.dataset.g;
+          var idx = ui.formGenres.indexOf(g);
+          if (idx === -1) ui.formGenres.push(g);
+          else ui.formGenres.splice(idx, 1);
+        }
         renderGenreChips();
       });
     });
@@ -1059,7 +1081,7 @@
         var v = inp.value.trim();
         if (v) {
           if (state.genres.indexOf(v) === -1) { state.genres.push(v); save(); }
-          ui.formGenre = v;
+          if (ui.formGenres.indexOf(v) === -1) ui.formGenres.push(v);
         }
         ui.addingGenre = false;
         renderGenreChips();
@@ -1086,9 +1108,9 @@
     var steps = document.getElementById('rSteps').value.trim();
     if (ui.editingRecipeId) {
       var r = findRecipe(ui.editingRecipeId);
-      if (r) { r.name = name; r.ingredients = ing; r.seasonings = sea; r.steps = steps; r.genre = ui.formGenre; }
+      if (r) { r.name = name; r.ingredients = ing; r.seasonings = sea; r.steps = steps; r.genres = ui.formGenres.slice(); }
     } else {
-      var newRecipe = { id: uid(), name: name, ingredients: ing, seasonings: sea, steps: steps, genre: ui.formGenre };
+      var newRecipe = { id: uid(), name: name, ingredients: ing, seasonings: sea, steps: steps, genres: ui.formGenres.slice() };
       state.recipes.push(newRecipe);
       if (ui.addAfterSave && ui.addTarget) {
         var t = ui.addTarget;
@@ -1122,9 +1144,13 @@
     var added = [], skipped = 0;
     data.forEach(function(o){
       if (!o || typeof o !== 'object' || typeof o.name !== 'string' || !o.name.trim()) { skipped++; return; }
-      var genre = (typeof o.genre === 'string') ? o.genre.trim() : '';
-      if (genre && state.genres.indexOf(genre) === -1) state.genres.push(genre);
-      added.push({ id: uid(), name: o.name.trim(), ingredients: toLines(o.ingredients), seasonings: toLines(o.seasonings), steps: toText(o.steps), genre: genre });
+      var genres = [];
+      if (Array.isArray(o.genres)) genres = o.genres.map(function(s){ return String(s).trim(); }).filter(Boolean);
+      else if (typeof o.genres === 'string' && o.genres.trim()) genres = o.genres.split(/[,、]/).map(function(s){ return s.trim(); }).filter(Boolean);
+      else if (typeof o.genre === 'string' && o.genre.trim()) genres = [o.genre.trim()];
+      genres = genres.filter(function(g, i){ return genres.indexOf(g) === i; });
+      genres.forEach(function(g){ if (state.genres.indexOf(g) === -1) state.genres.push(g); });
+      added.push({ id: uid(), name: o.name.trim(), ingredients: toLines(o.ingredients), seasonings: toLines(o.seasonings), steps: toText(o.steps), genres: genres });
     });
     if (!added.length) {
       alert('取り込めるレシピがありませんでした。各レシピに "name" が必要です。');
@@ -1160,9 +1186,10 @@
       stepsBlock.style.display = 'none';
     }
     var gEl = document.getElementById('detailGenre');
-    if (r.genre) {
+    var gs = r.genres || [];
+    if (gs.length) {
       gEl.style.display = 'block';
-      gEl.innerHTML = '<span>' + esc(r.genre) + '</span>';
+      gEl.innerHTML = gs.map(function(g){ return '<span>' + esc(g) + '</span>'; }).join(' ');
     } else {
       gEl.style.display = 'none';
     }
