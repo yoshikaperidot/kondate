@@ -751,6 +751,17 @@
   /* ---------- shopping tab ---------- */
   function fmtShort(k){ var d = fromKey(k); return (d.getMonth()+1) + '/' + d.getDate(); }
 
+  // 「じゃがいも 3個」「醤油 大さじ3」などから分量部分を取り除いて名前だけにする
+  var QTY_RE = /^((大さじ|小さじ)[0-9０-９.\/〜~々半]*|[0-9０-９.\/〜~半]+(個|本|枚|g|kg|ml|l|L|cc|袋|丁|尾|切れ|杯|束|片|玉|缶|パック|かけ|株|房|カップ|合|人前|人分|cm|滴|節|膳|摘み|つまみ)?|適量|少々|少量|ひとつまみ|一つまみ|ひとかけ|一かけ|お好みで?|好みで?|約[0-9０-９.\/]+.*|たっぷり)$/;
+  function stripQty(s){
+    var tokens = String(s).trim().split(/[\s　]+/);
+    while (tokens.length > 1 && QTY_RE.test(tokens[tokens.length - 1])) tokens.pop();
+    var t = tokens.join(' ');
+    // 「じゃがいも3個」のように分量が名前に直結しているケース
+    var t2 = t.replace(/[0-9０-９][0-9０-９.\/〜~]*(個|本|枚|g|kg|ml|cc|袋|丁|尾|切れ|杯|束|片|玉|缶|カップ|合)$/, '').trim();
+    return t2 || t;
+  }
+
   function renderShopping(){
     var today = new Date();
     var start, days;
@@ -774,8 +785,8 @@
           if (it.recipeId) {
             var r = findRecipe(it.recipeId);
             if (r) {
-              r.ingredients.forEach(function(s){ ing[s] = (ing[s]||0) + 1; });
-              r.seasonings.forEach(function(s){ sea[s] = (sea[s]||0) + 1; });
+              r.ingredients.forEach(function(s){ var n = stripQty(s); if (n) ing[n] = (ing[n]||0) + 1; });
+              r.seasonings.forEach(function(s){ var n = stripQty(s); if (n) sea[n] = (sea[n]||0) + 1; });
             } else {
               noRecipe.push(fmtShort(k) + ' ' + mm.short + ': ' + (it.name || '(削除済みレシピ)'));
             }
